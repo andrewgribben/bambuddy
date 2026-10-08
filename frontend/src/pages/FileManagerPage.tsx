@@ -2005,13 +2005,17 @@ export function FileManagerPage() {
 
   const bulkDeleteMutation = useMutation({
     mutationFn: (fileIds: number[]) => api.bulkDeleteLibrary(fileIds, []),
-    onSuccess: (_, fileIds) => {
+    onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ['library-files'] });
       queryClient.invalidateQueries({ queryKey: ['library-folders'] });
       queryClient.invalidateQueries({ queryKey: ['library-stats'] });
       queryClient.invalidateQueries({ queryKey: ['library-trash-count'] });
-      showToast(t('fileManager.toast.filesDeleted', { count: fileIds.length }), 'success');
-      setSelectedFiles([]);
+      if (result.errors?.length) {
+        showToast(`${result.deleted_files} deleted; ${result.errors.length} could not be deleted. ${result.errors[0].reason}`, 'error');
+      } else {
+        showToast(t('fileManager.toast.filesDeleted', { count: result.deleted_files }), 'success');
+      }
+      setSelectedFiles(result.errors?.map(error => error.file_id) || []);
       setDeleteConfirm(null);
     },
     onError: (error: Error) => {
@@ -3872,6 +3876,8 @@ export function FileManagerPage() {
           message={
             deleteConfirm.type === 'folder'
               ? t('fileManager.deleteFolderConfirm')
+              : files?.some(file => file.is_external && (deleteConfirm.type === 'bulk' ? selectedFiles.includes(file.id) : file.id === deleteConfirm.id))
+              ? 'External files will be permanently deleted from the linked drive and cannot be restored from Trash. Other files will be moved to Trash. Continue?'
               : deleteConfirm.type === 'bulk'
               ? t('fileManager.deleteFilesConfirm', { count: deleteConfirm.count })
               : t('fileManager.deleteFileConfirm')

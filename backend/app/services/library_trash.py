@@ -10,8 +10,8 @@ Two-stage file deletion for the library:
 2. A background sweeper in this service hard-deletes rows (and their bytes)
    whose ``deleted_at`` is older than the configured retention window.
 
-External files (``is_external=True``) are never placed in the trash — their
-bytes live outside Bambuddy's control, so there's nothing to restore.
+External files (``is_external=True``) are never placed in the trash. Explicit
+file deletion removes their bytes from writable linked folders immediately.
 """
 
 from __future__ import annotations

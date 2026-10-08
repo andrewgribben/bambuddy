@@ -7,7 +7,7 @@ from httpx import AsyncClient
 
 
 @pytest.fixture
-async def file_factory(db_session):
+async def file_factory(db_session, tmp_path, monkeypatch):
     """Factory for LibraryFile rows with sensible defaults."""
     _counter = [0]
 
@@ -23,6 +23,15 @@ async def file_factory(db_session):
             "file_type": "3mf",
         }
         defaults.update(kwargs)
+        if defaults.get("is_external"):
+            from backend.app.models.library import LibraryFolder
+            monkeypatch.setenv("BAMBUDDY_EXTERNAL_ROOTS", str(tmp_path))
+            folder = LibraryFolder(name=f"External {counter}", is_external=True, external_path=str(tmp_path), external_readonly=False)
+            db_session.add(folder)
+            await db_session.flush()
+            path = tmp_path / defaults["filename"]
+            path.write_bytes(b"external test file")
+            defaults.update(folder_id=folder.id, file_path=str(path))
         lib_file = LibraryFile(**defaults)
         db_session.add(lib_file)
         await db_session.commit()
@@ -72,14 +81,18 @@ async def test_delete_file_moves_to_trash(async_client: AsyncClient, file_factor
 @pytest.mark.asyncio
 @pytest.mark.integration
 async def test_delete_external_file_hard_deletes(async_client: AsyncClient, file_factory, db_session):
-    """External files skip the trash — DB row is dropped directly."""
+    """External files are removed from disk as well as the library."""
     from backend.app.models.library import LibraryFile
 
     f = await file_factory(is_external=True)
     file_id = f.id
+    from pathlib import Path
+    path = Path(f.file_path)
+    assert path.is_file()
     response = await async_client.delete(f"/api/v1/library/files/{file_id}")
     assert response.status_code == 200
     assert response.json()["trashed"] is False
+    assert not path.exists()
 
     # The route commits in its own session; expire ours so get() re-reads.
     db_session.expire_all()
@@ -103,6 +116,52 @@ async def test_restore_from_trash(async_client: AsyncClient, file_factory, db_se
     list_resp = await async_client.get("/api/v1/library/files")
     ids = [row["id"] for row in list_resp.json()]
     assert f.id in ids
+
+
+@pytest.mark.asyncio
+async def test_external_delete_failure_keeps_row(async_client, file_factory, db_session):
+    from pathlib import Path
+    from unittest.mock import patch
+    f = await file_factory(is_external=True)
+    with patch.object(Path, "unlink", side_effect=PermissionError("read-only filesystem")):
+        response = await async_client.delete(f"/api/v1/library/files/{f.id}")
+    assert response.status_code == 409
+    assert Path(f.file_path).is_file()
+    await db_session.refresh(f)
+    assert f.deleted_at is None
+
+
+@pytest.mark.asyncio
+async def test_external_bulk_delete_reports_readonly_and_removes_writable(async_client, file_factory, db_session):
+    from pathlib import Path
+    from backend.app.models.library import LibraryFolder
+    good = await file_factory(is_external=True)
+    blocked = await file_factory(is_external=True)
+    folder = await db_session.get(LibraryFolder, blocked.folder_id)
+    folder.external_readonly = True
+    await db_session.commit()
+    response = await async_client.post("/api/v1/library/bulk-delete", json={"file_ids": [good.id, blocked.id], "folder_ids": []})
+    assert response.status_code == 200
+    assert response.json()["deleted_files"] == 1
+    assert response.json()["errors"][0]["file_id"] == blocked.id
+    assert not Path(good.file_path).exists()
+    assert Path(blocked.file_path).exists()
+    await db_session.refresh(blocked)
+
+
+@pytest.mark.asyncio
+async def test_external_delete_unlinks_symlink_not_target(async_client, file_factory, tmp_path):
+    from pathlib import Path
+    f = await file_factory(is_external=True)
+    path = Path(f.file_path)
+    target = tmp_path / "keep.3mf"
+    target.write_bytes(b"keep")
+    path.unlink()
+    path.symlink_to(target)
+    response = await async_client.delete(f"/api/v1/library/files/{f.id}")
+    assert response.status_code == 200
+    assert not path.is_symlink()
+    assert target.read_bytes() == b"keep"
 
 
 @pytest.mark.asyncio

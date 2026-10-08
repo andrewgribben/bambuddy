@@ -7821,7 +7821,7 @@ export const api = {
       body: JSON.stringify({ file_ids: fileIds, folder_id: folderId }),
     }),
   bulkDeleteLibrary: (fileIds: number[], folderIds: number[]) =>
-    request<{ deleted_files: number; deleted_folders: number }>('/library/bulk-delete', {
+    request<{ deleted_files: number; deleted_folders: number; errors?: { file_id: number; reason: string }[] }>('/library/bulk-delete', {
       method: 'POST',
       body: JSON.stringify({ file_ids: fileIds, folder_ids: folderIds }),
     }),
