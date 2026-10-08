@@ -1354,6 +1354,35 @@ describe('FileManagerPage', () => {
       });
     });
 
+    it('generates missing thumbnails for one folder from its menu', async () => {
+      const user = userEvent.setup();
+      let body: { folder_id?: number; all_missing?: boolean } | undefined;
+      server.use(
+        http.post('/api/v1/library/generate-stl-thumbnails', async ({ request }) => {
+          body = (await request.json()) as { folder_id?: number; all_missing?: boolean };
+          return HttpResponse.json({
+            processed: 1,
+            succeeded: 1,
+            failed: 0,
+            results: [{ file_id: 2, success: true }],
+          });
+        }),
+      );
+
+      render(<FileManagerPage />);
+      await waitFor(() => expect(screen.getByText('Art Projects')).toBeInTheDocument());
+
+      const row = screen.getByTitle('Art Projects').closest('.group') as HTMLElement;
+      await user.click(within(row).getByTitle('Actions'));
+      expect(within(row).getByRole('button', { name: 'Generate thumbnails' })).toBeInTheDocument();
+      // A library folder has no disk path to scan.
+      expect(within(row).queryByRole('button', { name: 'Scan' })).not.toBeInTheDocument();
+
+      await user.click(within(row).getByRole('button', { name: 'Generate thumbnails' }));
+      await waitFor(() => expect(body).toEqual({ folder_id: 3, all_missing: true }));
+      expect(await screen.findByText('Generated 1 thumbnail(s)')).toBeInTheDocument();
+    });
+
     it('shows STL file without thumbnail in file list', async () => {
       render(<FileManagerPage />);
 

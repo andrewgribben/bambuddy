@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { render } from '../utils';
 import { FileManagerPage } from '../../pages/FileManagerPage';
@@ -280,6 +280,36 @@ describe('FileManagerPage - External Folders', () => {
       await waitFor(() => {
         expect(screen.getByText('Scan')).toBeInTheDocument();
       });
+    });
+
+    it('offers scan and thumbnails on an external folder menu', async () => {
+      const user = userEvent.setup();
+      let scannedId: string | undefined;
+      server.use(
+        http.post('/api/v1/library/folders/:id/scan', ({ params }) => {
+          scannedId = String(params.id);
+          return HttpResponse.json({ status: 'success', added: 1, removed: 0 });
+        }),
+      );
+      render(<FileManagerPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('NAS Prints')).toBeInTheDocument();
+      });
+
+      const nasRow = screen.getByTitle('NAS Prints').closest('.group') as HTMLElement;
+      await user.click(within(nasRow).getByTitle('Actions'));
+      expect(within(nasRow).getByRole('button', { name: 'Scan' })).toBeInTheDocument();
+      expect(within(nasRow).getByRole('button', { name: 'Generate thumbnails' })).toBeInTheDocument();
+
+      await user.click(within(nasRow).getByRole('button', { name: 'Scan' }));
+      await waitFor(() => expect(scannedId).toBe('2'));
+      expect(await screen.findByText('Scan complete: 1 added, 0 removed')).toBeInTheDocument();
+
+      const regularRow = screen.getByTitle('Regular Folder').closest('.group') as HTMLElement;
+      await user.click(within(regularRow).getByTitle('Actions'));
+      expect(within(regularRow).queryByRole('button', { name: 'Scan' })).not.toBeInTheDocument();
+      expect(within(regularRow).getByRole('button', { name: 'Generate thumbnails' })).toBeInTheDocument();
     });
 
     it('does not show info bar for regular folders', async () => {
