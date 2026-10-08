@@ -7567,7 +7567,9 @@ export const api = {
     else if (scope === 'external') params.set('external_only', 'true');
     // recursive=true expands the folder_id filter to include every descendant
     // folder (#1268). Only meaningful when folder_id is set; ignored server-side
-    // otherwise. Off by default so non-search callers keep folder-scoped behavior.
+    // otherwise. Off by default so callers that want one folder's own files
+    // (column panes, project pages) keep that scope. The File Manager grid and
+    // list pass true so a selected folder lists its whole subtree.
     if (recursive) params.set('recursive', 'true');
     // Tag filter (#1268). Repeated ?tag_ids=N&tag_ids=M form for AND semantics
     // — backend joins the association table and HAVING COUNT(DISTINCT) matches

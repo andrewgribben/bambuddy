@@ -1805,13 +1805,15 @@ export function FileManagerPage() {
     staleTime: 30_000,
   });
 
-  // #1268: when a folder is selected and the user has typed a search query,
-  // ask the server to expand the result to every descendant folder so the
-  // client-side filter can match files in subfolders too. Without this the
-  // listing is just the immediate children and "robot.3mf" two levels deep
-  // is invisible from the parent. Only kicks in for folder-scoped views —
-  // root and the internal/external pseudo-nodes already return the union.
-  const searchExpandsSubfolders = selectedFolderId !== null && searchQuery.trim().length > 0;
+  // A selected folder should filter the main window the same way All Files and
+  // External already do: every file in that folder and the folders beneath it.
+  // Otherwise a branch that only holds subfolders looks empty, and picking it
+  // does not narrow the grid. Columns stays one level per pane — a parent pane
+  // that also listed its children would repeat those files beside the child
+  // column. A search inside columns still expands, because the folder columns
+  // are hidden while a filter is active (#1268).
+  const folderListsDescendants =
+    selectedFolderId !== null && (viewMode !== 'columns' || searchQuery.trim().length > 0);
   // The tag filter overrides folder scoping server-side (#1268 design call),
   // so the FE query key includes it as a peer of folder/topLevelView. Sorted
   // so the cache hits regardless of the order tags were toggled.
@@ -1858,20 +1860,21 @@ export function FileManagerPage() {
   const paneRootOnly = viewMode === 'columns' && selectedFolderId === null && !columnsFilterActive;
 
   const { data: files, isLoading: filesLoading } = useQuery({
-    queryKey: ['library-files', selectedFolderId, topLevelView, searchExpandsSubfolders, tagFilterKey, paneRootOnly],
-    // When a specific folder is selected we list its contents directly; when
-    // no folder is selected the topLevelView pseudo-node decides whether the
-    // server scopes the result to internal-managed-storage files or to the
-    // union of every external folder (#1621). include_root is false outside
-    // the columns view's root level, so "All Files" still descends into
-    // subfolders (regression guard from #1499).
+    queryKey: ['library-files', selectedFolderId, topLevelView, folderListsDescendants, tagFilterKey, paneRootOnly],
+    // When a specific folder is selected, grid and list include every
+    // descendant (folderListsDescendants). Columns lists that folder's own
+    // files only. When no folder is selected the topLevelView pseudo-node
+    // decides whether the server scopes the result to internal-managed-storage
+    // files or to the union of every external folder (#1621). include_root is
+    // false outside the columns view's root level, so "All Files" still
+    // descends into subfolders (regression guard from #1499).
     queryFn: () =>
       api.getLibraryFiles(
         selectedFolderId,
         paneRootOnly,
         undefined,
         selectedFolderId === null ? topLevelView : undefined,
-        searchExpandsSubfolders,
+        folderListsDescendants,
         tagFilterKey,
       ),
   });
@@ -3106,7 +3109,8 @@ export function FileManagerPage() {
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-full pl-9 pr-3 py-1.5 bg-bambu-dark border border-bambu-dark-tertiary rounded text-sm text-white placeholder-bambu-gray focus:outline-none focus:border-bambu-green"
                 />
-                {searchExpandsSubfolders && (
+                {folderListsDescendants &&
+                  ((selectedFolder?.children.length ?? 0) > 0 || searchQuery.trim().length > 0) && (
                   <span
                     className="absolute -bottom-4 left-0 text-[10px] text-bambu-gray whitespace-nowrap"
                     title={t('fileManager.searchSubfoldersHint')}

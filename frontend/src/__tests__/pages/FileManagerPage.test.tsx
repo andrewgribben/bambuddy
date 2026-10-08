@@ -1958,6 +1958,71 @@ describe('FileManagerPage', () => {
     });
   });
 
+  describe('folder subtree listing', () => {
+    const subtreeHandler = () =>
+      http.get('/api/v1/library/files', ({ request }) => {
+        const params = new URL(request.url).searchParams;
+        const folderId = params.get('folder_id');
+        if (params.get('recursive') === 'true' && folderId) {
+          const gather = (folders: typeof mockFolders): Record<string, unknown>[] => {
+            const files: Record<string, unknown>[] = [];
+            for (const folder of folders) {
+              if (String(folder.id) === folderId) {
+                const collect = (node: (typeof mockFolders)[number]) => {
+                  files.push(...(mockFolderFiles[String(node.id)] ?? []));
+                  for (const child of node.children as typeof mockFolders) collect(child);
+                };
+                collect(folder);
+              } else {
+                files.push(...gather(folder.children as typeof mockFolders));
+              }
+            }
+            return files;
+          };
+          return HttpResponse.json(gather(mockFolders));
+        }
+        return HttpResponse.json(filesForRequest(request));
+      });
+
+    it('lists files in the selected folder and every folder beneath it', async () => {
+      const user = userEvent.setup();
+      server.use(subtreeHandler());
+      render(<FileManagerPage />);
+
+      await waitFor(() => expect(screen.getByText('Benchy')).toBeInTheDocument());
+
+      await user.click(screen.getByText('Functional Parts'));
+
+      // Functional Parts holds Spacer directly and clamp/Hinge under Brackets.
+      await waitFor(() => {
+        expect(screen.getByText('Spacer')).toBeInTheDocument();
+        expect(screen.getByText('clamp.stl')).toBeInTheDocument();
+        expect(screen.getByText('Hinge')).toBeInTheDocument();
+      });
+      // A sibling branch stays out of the filter.
+      expect(screen.queryByText('Vase')).not.toBeInTheDocument();
+      expect(screen.queryByText('Benchy')).not.toBeInTheDocument();
+      expect(screen.getByText('Including subfolders')).toBeInTheDocument();
+    });
+
+    it('keeps column view to the selected folder\'s own files', async () => {
+      const user = userEvent.setup();
+      server.use(subtreeHandler());
+      render(<FileManagerPage />);
+
+      await waitFor(() => expect(screen.getByText('Benchy')).toBeInTheDocument());
+      await user.click(screen.getByTitle('Column view'));
+
+      const columns = within(screen.getByTestId('columns-view'));
+      await user.click(columns.getByText('Functional Parts'));
+
+      const pane = within(screen.getByTestId('columns-files-pane'));
+      await waitFor(() => expect(pane.getByText('Spacer')).toBeInTheDocument());
+      expect(pane.queryByText('clamp.stl')).not.toBeInTheDocument();
+      expect(pane.queryByText('Hinge')).not.toBeInTheDocument();
+    });
+  });
+
   describe('last-modified date display (#2680)', () => {
     it('is hidden by default and revealed by the toolbar toggle', async () => {
       const user = userEvent.setup();
