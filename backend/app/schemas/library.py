@@ -436,6 +436,7 @@ class BatchThumbnailRequest(BaseModel):
     """Schema for batch STL thumbnail generation request."""
 
     file_ids: list[int] | None = None
+    # This folder and every folder beneath it.
     folder_id: int | None = None
     all_missing: bool = False
 

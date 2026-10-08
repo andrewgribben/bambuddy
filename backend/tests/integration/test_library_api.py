@@ -1271,6 +1271,37 @@ endsolid cube"""
 
     @pytest.mark.asyncio
     @pytest.mark.integration
+    async def test_batch_generate_thumbnails_by_folder_includes_descendants(
+        self, async_client: AsyncClient, file_factory, db_session
+    ):
+        """A folder request covers that folder and the folders beneath it."""
+        from backend.app.models.library import LibraryFolder
+
+        parent = LibraryFolder(name="Parent")
+        db_session.add(parent)
+        await db_session.commit()
+        await db_session.refresh(parent)
+        child = LibraryFolder(name="Child", parent_id=parent.id)
+        sibling = LibraryFolder(name="Sibling")
+        db_session.add_all([child, sibling])
+        await db_session.commit()
+        await db_session.refresh(child)
+        await db_session.refresh(sibling)
+
+        parent_file = await file_factory(filename="parent.stl", folder_id=parent.id, thumbnail_path=None)
+        child_file = await file_factory(filename="child.stl", folder_id=child.id, thumbnail_path=None)
+        await file_factory(filename="sibling.stl", folder_id=sibling.id, thumbnail_path=None)
+
+        response = await async_client.post(
+            "/api/v1/library/generate-stl-thumbnails",
+            json={"folder_id": parent.id, "all_missing": True},
+        )
+        assert response.status_code == 200
+        result = response.json()
+        assert {row["file_id"] for row in result["results"]} == {parent_file.id, child_file.id}
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_batch_generate_thumbnails_all_missing(self, async_client: AsyncClient, file_factory, db_session):
         """Verify batch thumbnail generation finds all STL files missing thumbnails."""
         # Create files with and without thumbnails

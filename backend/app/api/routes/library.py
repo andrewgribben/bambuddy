@@ -2798,7 +2798,7 @@ async def batch_generate_stl_thumbnails(
 
     Can generate thumbnails for:
     - Specific file IDs (file_ids)
-    - All STL/PDF files in a folder (folder_id)
+    - All STL/PDF files in a folder and every folder beneath it (folder_id)
     - All STL/PDF files missing thumbnails (all_missing=True)
     """
     thumbnails_dir = get_library_thumbnails_dir()
@@ -2815,12 +2815,18 @@ async def batch_generate_stl_thumbnails(
         # Specific files
         query = query.where(LibraryFile.id.in_(request.file_ids))
     elif request.folder_id is not None:
-        # All STL/PDF files in a specific folder
-        query = query.where(LibraryFile.folder_id == request.folder_id)
-        if not request.all_missing:
-            # If not specifically asking for missing thumbnails, get all
-            pass
-        else:
+        # This folder and every folder beneath it. A parent that only holds
+        # subfolders would otherwise generate nothing.
+        roots = (
+            select(LibraryFolder.id)
+            .where(LibraryFolder.id == request.folder_id)
+            .cte(name="thumb_folder_descendants", recursive=True)
+        )
+        descendants = roots.union_all(
+            select(LibraryFolder.id).join(roots, LibraryFolder.parent_id == roots.c.id)
+        )
+        query = query.where(LibraryFile.folder_id.in_(select(descendants.c.id)))
+        if request.all_missing:
             query = query.where(LibraryFile.thumbnail_path.is_(None))
     elif request.all_missing:
         # All STL/PDF files without thumbnails

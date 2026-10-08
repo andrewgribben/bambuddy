@@ -759,6 +759,10 @@ interface FolderTreeItemProps {
   onDelete: (id: number) => void;
   onLink: (folder: LibraryFolderTree) => void;
   onRename: (folder: LibraryFolderTree) => void;
+  onGenerateThumbnails: (folder: LibraryFolderTree) => void;
+  onScan: (folder: LibraryFolderTree) => void;
+  thumbnailsPending?: boolean;
+  scanPending?: boolean;
   depth?: number;
   wrapNames?: boolean;
   defaultExpanded?: boolean;
@@ -767,8 +771,9 @@ interface FolderTreeItemProps {
   t: TFunction;
 }
 
-// Folder kebab: Rename / Link / Delete. Shared by the tree sidebar and the
-// columns view so both offer exactly the same entries and permission gates.
+// Folder kebab: Rename / Link / Generate thumbnails / Scan / Delete. Shared by
+// the tree sidebar and the columns view so both offer exactly the same entries
+// and permission gates. Scan is only offered for an external folder.
 // Rendered through `ContextMenu` (position: fixed, anchored to the button)
 // rather than an absolutely positioned dropdown, because both hosts scroll —
 // a dropdown inside an overflow-y-auto column gets clipped at its edge.
@@ -777,6 +782,10 @@ interface FolderActionsMenuProps {
   onDelete: (id: number) => void;
   onLink: (folder: LibraryFolderTree) => void;
   onRename: (folder: LibraryFolderTree) => void;
+  onGenerateThumbnails: (folder: LibraryFolderTree) => void;
+  onScan: (folder: LibraryFolderTree) => void;
+  thumbnailsPending?: boolean;
+  scanPending?: boolean;
   hasPermission: (permission: Permission) => boolean;
   // Hide the kebab until its `group` row is hovered or focused — only for
   // pointers that can hover (#2865). The menu is a DOM descendant, so the
@@ -787,7 +796,7 @@ interface FolderActionsMenuProps {
   t: TFunction;
 }
 
-function FolderActionsMenu({ folder, onDelete, onLink, onRename, hasPermission, revealOnHover = false, tabIndex, t }: FolderActionsMenuProps) {
+function FolderActionsMenu({ folder, onDelete, onLink, onRename, onGenerateThumbnails, onScan, thumbnailsPending = false, scanPending = false, hasPermission, revealOnHover = false, tabIndex, t }: FolderActionsMenuProps) {
   const [menuAnchor, setMenuAnchor] = useState<{ x: number; y: number } | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -813,6 +822,8 @@ function FolderActionsMenu({ folder, onDelete, onLink, onRename, hasPermission, 
       ? t('fileManager.onlyEmptyFoldersDeletable')
       : t('fileManager.noPermissionDeleteFolder');
   const canRename = hasPermission('library:update_all');
+  const canGenerateThumbnails = hasPermission('library:update_all') || hasPermission('library:update_own');
+  const canScan = hasPermission('library:upload');
 
   const items: ContextMenuItem[] = [
     {
@@ -829,6 +840,26 @@ function FolderActionsMenu({ folder, onDelete, onLink, onRename, hasPermission, 
       disabled: !canRename,
       title: !canRename ? t('fileManager.noPermissionLinkFolder') : undefined,
     },
+    {
+      label: t('fileManager.generateThumbnailsForFolder'),
+      icon: <Image className="w-3.5 h-3.5" />,
+      onClick: () => onGenerateThumbnails(folder),
+      disabled: !canGenerateThumbnails || thumbnailsPending,
+      title: !canGenerateThumbnails
+        ? t('fileManager.noPermissionGenerateThumbnail')
+        : t('fileManager.generateThumbnailsForFolderHint'),
+    },
+    ...(isExternal
+      ? [
+          {
+            label: t('fileManager.scanFolder'),
+            icon: <RefreshCw className={`w-3.5 h-3.5 ${scanPending ? 'animate-spin' : ''}`} />,
+            onClick: () => onScan(folder),
+            disabled: !canScan || scanPending,
+            title: !canScan ? t('fileManager.noPermissionUpload') : t('fileManager.scanFolderHint'),
+          },
+        ]
+      : []),
     {
       label: t('common.delete'),
       icon: <Trash2 className="w-3.5 h-3.5" />,
@@ -876,7 +907,7 @@ function FolderActionsMenu({ folder, onDelete, onLink, onRename, hasPermission, 
   );
 }
 
-function FolderTreeItem({ folder, selectedFolderId, onSelect, onDelete, onLink, onRename, depth = 0, wrapNames = false, defaultExpanded = true, showModified = false, hasPermission, t }: FolderTreeItemProps) {
+function FolderTreeItem({ folder, selectedFolderId, onSelect, onDelete, onLink, onRename, onGenerateThumbnails, onScan, thumbnailsPending = false, scanPending = false, depth = 0, wrapNames = false, defaultExpanded = true, showModified = false, hasPermission, t }: FolderTreeItemProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
   const hasChildren = folder.children.length > 0;
   const isLinked = folder.project_id || folder.archive_id;
@@ -964,6 +995,10 @@ function FolderTreeItem({ folder, selectedFolderId, onSelect, onDelete, onLink, 
           onDelete={onDelete}
           onLink={onLink}
           onRename={onRename}
+          onGenerateThumbnails={onGenerateThumbnails}
+          onScan={onScan}
+          thumbnailsPending={thumbnailsPending}
+          scanPending={scanPending}
           hasPermission={hasPermission}
           revealOnHover={!wrapNames}
           t={t}
@@ -980,6 +1015,10 @@ function FolderTreeItem({ folder, selectedFolderId, onSelect, onDelete, onLink, 
               onDelete={onDelete}
               onLink={onLink}
               onRename={onRename}
+              onGenerateThumbnails={onGenerateThumbnails}
+              onScan={onScan}
+              thumbnailsPending={thumbnailsPending}
+              scanPending={scanPending}
               depth={depth + 1}
               wrapNames={wrapNames}
               defaultExpanded={defaultExpanded}
@@ -2079,7 +2118,11 @@ export function FileManagerPage() {
   });
 
   const batchThumbnailMutation = useMutation({
-    mutationFn: () => api.batchGenerateStlThumbnails({ all_missing: true }),
+    mutationFn: (options?: { folder_id?: number }) =>
+      api.batchGenerateStlThumbnails({
+        all_missing: true,
+        ...(options?.folder_id != null ? { folder_id: options.folder_id } : {}),
+      }),
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ['library-files'] });
       // Update thumbnail versions for cache busting
@@ -3001,6 +3044,10 @@ export function FileManagerPage() {
                 onDelete={(id) => setDeleteConfirm({ type: 'folder', id })}
                 onLink={setLinkFolder}
                 onRename={(f) => setRenameItem({ type: 'folder', id: f.id, name: f.name })}
+                onGenerateThumbnails={(target) => batchThumbnailMutation.mutate({ folder_id: target.id })}
+                onScan={(target) => scanExternalFolderMutation.mutate(target.id)}
+                thumbnailsPending={batchThumbnailMutation.isPending}
+                scanPending={scanExternalFolderMutation.isPending}
                 wrapNames={wrapFolderNames}
                 defaultExpanded={!collapseFoldersByDefault}
                 showModified={showModified}
@@ -3462,6 +3509,10 @@ export function FileManagerPage() {
                             onDelete={(id) => setDeleteConfirm({ type: 'folder', id })}
                             onLink={setLinkFolder}
                             onRename={(f) => setRenameItem({ type: 'folder', id: f.id, name: f.name })}
+                            onGenerateThumbnails={(target) => batchThumbnailMutation.mutate({ folder_id: target.id })}
+                            onScan={(target) => scanExternalFolderMutation.mutate(target.id)}
+                            thumbnailsPending={batchThumbnailMutation.isPending}
+                            scanPending={scanExternalFolderMutation.isPending}
                             hasPermission={hasPermission}
                             revealOnHover={!isSelectedFolder}
                             tabIndex={isSelectedFolder ? 0 : -1}
